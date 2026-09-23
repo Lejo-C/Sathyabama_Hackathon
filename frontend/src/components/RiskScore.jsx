@@ -55,11 +55,7 @@ export default function RiskScore({ score = 0, level, levelColor }) {
           Overall Risk Score
         </h3>
 
-        <span
-          className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${levelColor}`}
-        >
-          {level}
-        </span>
+
       </div>
 
       {/* Main Gauge */}
@@ -179,24 +175,6 @@ export default function RiskScore({ score = 0, level, levelColor }) {
         </div>
 
       </div>
-
-      {/* Footer */}
-      <div className="pt-3 border-t border-[#F1F5F9] flex items-center justify-between text-[10px]">
-
-        <span className="flex items-center gap-1.5 font-medium text-red-600">
-          <AlertTriangle className="w-3.5 h-3.5" />
-
-          <span>
-            High Fraud Probability
-          </span>
-        </span>
-
-        <span className="font-mono text-[9px] text-[#667085] bg-[#F8FAFC] px-2 py-0.5 rounded border border-[#E5E7EB]">
-          Scan Engine #L1-7
-        </span>
-
-      </div>
-
     </div>
   );
 }
