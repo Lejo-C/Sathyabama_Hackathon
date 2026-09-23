@@ -30,26 +30,30 @@ from typing import Any
 
 from .core.schemas import EvidenceItem, ExtractedClaims, LevelReport, VerificationResponse
 from .core.scoring import (  # re-exported: the single tuning surface
+    CHECK_PRIORITY,
     CHECK_WEIGHTS,
     HARD_FLOOR_REASONS,
     HARD_FLOORS,
     LEVEL_WEIGHTS,
+    PRIORITY_POINTS,
     apply_hard_floors,
+    build_level_report,
     combine_levels,
     is_low_confidence,
 )
-from .level2_company.orchestrator import run_level2
-from .level3_opportunity.orchestrator import run_level3
-from .level4_evidence.orchestrator import run_level4
+from .pipeline import run_all_checks
 from .shared.explainer import explain
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CHECK_PRIORITY",
     "CHECK_WEIGHTS",
+    "PRIORITY_POINTS",
     "LEVEL_WEIGHTS",
     "HARD_FLOORS",
     "verify_company_opportunity",
+    "run_levels_2_to_4",
     "collect_hard_floor_flags",
 ]
 
@@ -87,9 +91,7 @@ def verify_company_opportunity(
     started = time.perf_counter()
     context = context if context is not None else {}
 
-    level2 = _safe_level(2, run_level2, claims, context)
-    level3 = _safe_level(3, run_level3, claims, context)
-    level4 = _safe_level(4, run_level4, claims, context)
+    level2, level3, level4 = run_levels_2_to_4(claims, context)
 
     evidence: list[EvidenceItem] = [
         *level2.evidence, *level3.evidence, *level4.evidence
@@ -125,28 +127,47 @@ def verify_company_opportunity(
     )
 
 
-def _safe_level(level: int, runner, claims: ExtractedClaims, context: dict[str, Any]) -> LevelReport:
-    """Run one level; an unexpected crash degrades that level, not the request."""
+def run_levels_2_to_4(
+    claims: ExtractedClaims, context: dict[str, Any]
+) -> tuple[LevelReport, LevelReport, LevelReport]:
+    """Execute every check in two parallel waves and score the three levels.
+
+    A crash inside the pipeline degrades every level rather than failing the
+    request; individual check failures are already isolated by the runner.
+    """
     try:
-        return runner(claims, context)
-    except Exception as exc:  # pragma: no cover - run_checks already isolates checks
-        logger.exception("level %s orchestrator failed", level)
-        return LevelReport.from_evidence(
-            level,
-            [
-                EvidenceItem(
-                    level=level,
-                    check_id=f"l{level}_orchestrator",
-                    label=f"Level {level} Verification",
-                    status="unavailable",
-                    finding=f"Level {level} could not run: {type(exc).__name__}.",
-                    raw_data={"error": str(exc)},
-                    risk_weight=0.0,
-                    confidence=0.0,
-                )
-            ],
-            100.0,
+        grouped = run_all_checks(claims, context)
+    except Exception as exc:  # pragma: no cover - run_checks isolates checks
+        logger.exception("verification pipeline failed")
+        return tuple(  # type: ignore[return-value]
+            _degraded_level(level, exc) for level in (2, 3, 4)
         )
+
+    reports = tuple(
+        build_level_report(level, grouped.get(level, [])) for level in (2, 3, 4)
+    )
+    for report in reports:
+        context[f"level{report.level}_report"] = report
+    return reports  # type: ignore[return-value]
+
+
+def _degraded_level(level: int, exc: Exception) -> LevelReport:
+    """A level that could not run at all, reported honestly at zero penalty."""
+    return build_level_report(
+        level,
+        [
+            EvidenceItem(
+                level=level,
+                check_id=f"l{level}_orchestrator",
+                label=f"Level {level} Verification",
+                status="unavailable",
+                finding=f"Level {level} could not run: {type(exc).__name__}.",
+                raw_data={"error": str(exc)},
+                risk_weight=0.0,
+                confidence=0.0,
+            )
+        ],
+    )
 
 
 def _floor_note(applied: list[str]) -> str:

@@ -15,6 +15,7 @@ young domain only caps the score when it is paired with an email mismatch
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from ..core.runner import item
@@ -73,12 +74,14 @@ def check_website(claims: ExtractedClaims, context: dict[str, Any]) -> list[Evid
     domain = info.registered_domain
     context["claimed_domain"] = domain
 
-    evidence = [
-        _domain_age_item(domain, context),
-        *_liveness_items(claims, domain, context),
-        _name_match_item(claims, info.label, domain),
-    ]
-    return evidence
+    # WHOIS and the HTTP fetch ask different servers, so they go out together
+    # rather than one after the other.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        age_future = pool.submit(_domain_age_item, domain, context)
+        live_future = pool.submit(_liveness_items, claims, domain, context)
+        age_item, live_items = age_future.result(), live_future.result()
+
+    return [age_item, *live_items, _name_match_item(claims, info.label, domain)]
 
 
 def _domain_age_item(domain: str, context: dict[str, Any]) -> EvidenceItem:

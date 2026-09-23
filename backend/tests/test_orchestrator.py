@@ -200,6 +200,47 @@ def test_endpoint_returns_all_three_levels(offline, scam_claims):
     assert body["level3"]["checks_failed"] >= 4
 
 
+def test_pipeline_groups_evidence_by_level_in_canonical_order(offline, scam_claims):
+    from app.pipeline import EVIDENCE_ORDER, run_all_checks
+
+    grouped = run_all_checks(scam_claims, {})
+    assert set(grouped) == {2, 3, 4}
+
+    for level, items in grouped.items():
+        assert all(entry.level == level for entry in items)
+        known = [e.check_id for e in items if e.check_id in EVIDENCE_ORDER]
+        assert known == sorted(known, key=EVIDENCE_ORDER.index), "display order lost"
+
+
+def test_identical_searches_hit_the_cache_once(monkeypatch):
+    """Concurrent checks asking the same question must cost one round trip."""
+    from app.shared import web_search as ws
+
+    calls: list[str] = []
+
+    class FakeDDGS:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def text(self, query, max_results=5):
+            calls.append(query)
+            return [{"title": "t", "href": "https://example.com", "body": "b"}]
+
+    monkeypatch.setattr(ws, "_client", lambda: FakeDDGS())
+    ws.reset_cache()
+    first = ws.web_search("same question", max_results=5)
+    second = ws.web_search("same question", max_results=5)
+    assert calls == ["same question"]
+    assert [r.url for r in first] == [r.url for r in second]
+
+    ws.reset_cache()
+    ws.web_search("same question", max_results=5)
+    assert len(calls) == 2, "cache must be per request, not global forever"
+
+
 def test_endpoint_rejects_a_payload_without_posting_text():
     with TestClient(app) as client:
         response = client.post("/api/verify/company-opportunity", json={"company_name": "X"})

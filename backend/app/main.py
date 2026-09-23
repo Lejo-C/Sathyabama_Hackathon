@@ -62,6 +62,7 @@ async def root() -> dict[str, object]:
         "levels_implemented": [2, 3, 4],
         "docs": "/docs",
         "endpoints": [
+            "POST /api/verify/final",
             "POST /api/verify/company-opportunity",
             "GET /api/verify/health",
         ],

@@ -16,7 +16,9 @@ import tldextract
 
 logger = logging.getLogger(__name__)
 
-WHOIS_TIMEOUT = 6.0
+# Kept tight: a port-43 server that has not answered in four seconds is not
+# going to save the demo, and the check degrades to "unavailable" for free.
+WHOIS_TIMEOUT = 4.0
 
 # suffix_list_urls=() keeps tldextract on its bundled snapshot: no surprise
 # network call the first time a check parses a domain.

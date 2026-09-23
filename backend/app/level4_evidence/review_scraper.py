@@ -1,7 +1,9 @@
 """Level 4.1 - Public reviews and candidate experience.
 
-Two searches, two signals: has anyone publicly reported this employer for fraud,
-and does it have a normal employer-review footprint at all?
+One search, two signals: has anyone publicly reported this employer for fraud,
+and does it have a normal employer-review footprint at all? Each result is
+classified locally - by its wording for complaints, by its domain for review
+sites - so both answers come out of a single round trip.
 
 Copyright discipline: at most one short phrase is quoted per source, always with
 its URL, never a reproduced paragraph.
@@ -10,7 +12,6 @@ its URL, never a reproduced paragraph.
 from __future__ import annotations
 
 import re
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from ..core.runner import item
@@ -43,6 +44,7 @@ REVIEW_SITES = {
     "reddit.com": "Reddit",
 }
 COMPANY_RELEVANCE = 70.0
+MAX_RESULTS = 8
 MAX_QUOTED_WORDS = 8
 DATE_RE = re.compile(
     r"\b(\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{4}|"
@@ -61,37 +63,24 @@ def check_reviews(claims: ExtractedClaims, context: dict[str, Any]) -> list[Evid
             for cid, label in LABELS.items()
         ]
 
-    fraud_query = f'"{company}" scam OR fraud OR complaint'
-    review_query = f'"{company}" reviews glassdoor OR ambitionbox'
-
-    # The two searches are independent, so they run side by side: on a throttled
-    # network this keeps the check inside its timeout instead of spending two
-    # full search budgets back to back.
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = {
-            "fraud": pool.submit(_search, fraud_query),
-            "review": pool.submit(_search, review_query),
-        }
-        fraud_results, fraud_error = futures["fraud"].result()
-        review_results, review_error = futures["review"].result()
-
-    context.setdefault("searches", {})["l4_fraud_mentions"] = [
-        r.to_dict() for r in fraud_results
-    ]
-    context.setdefault("searches", {})["l4_review_presence"] = [
-        r.to_dict() for r in review_results
-    ]
+    # One query answers both questions, and each result is classified locally:
+    # complaint reports by their wording, review presence by their domain.
+    # Two queries doubled this check's wall-clock cost on a throttled network
+    # for evidence the same result set already carries.
+    query = f'"{company}" scam OR fraud OR complaint OR reviews'
+    results, error = _search(query)
+    context.setdefault("searches", {})["l4_reviews"] = [r.to_dict() for r in results]
 
     return [
-        _fraud_item(company, fraud_results, fraud_query, fraud_error),
-        _presence_item(company, review_results + fraud_results, review_query, review_error),
+        _fraud_item(company, results, query, error),
+        _presence_item(company, results, query, error),
     ]
 
 
 def _search(query: str) -> tuple[list[SearchResult], str | None]:
     """Run one search, returning ``(results, error)`` instead of raising."""
     try:
-        return web_search(query, max_results=6), None
+        return web_search(query, max_results=MAX_RESULTS), None
     except SearchUnavailable as exc:
         return [], str(exc)
 

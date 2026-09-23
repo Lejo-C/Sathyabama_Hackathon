@@ -22,9 +22,12 @@ from fastapi import APIRouter
 from ..core.schemas import (
     DependencyHealth,
     ExtractedClaims,
+    FinalVerdict,
+    FinalVerdictRequest,
     HealthResponse,
     VerificationResponse,
 )
+from ..final_verdict import build_final_verdict
 from ..level2_4_orchestrator import verify_company_opportunity
 from ..shared.domain_utils import WhoisUnavailable, domain_age
 from ..shared.email_utils import DnsUnavailable, has_mx
@@ -45,6 +48,19 @@ async def verify(claims: ExtractedClaims) -> VerificationResponse:
     # The checks are synchronous (requests / whois / dnspython), so the whole
     # pipeline is handed to a worker thread and the event loop stays free.
     return await asyncio.to_thread(verify_company_opportunity, claims)
+
+
+@router.post("/final", response_model=FinalVerdict)
+async def final_verdict(payload: FinalVerdictRequest) -> FinalVerdict:
+    """Run Levels 2-4 and merge the teammate's Level 1 result into one verdict.
+
+    Returns a single ``risk_score`` (0-100, higher = riskier) with the band, the
+    recommendation, every contributing check ranked by how much risk it raised,
+    and a per-level breakdown showing the basis for each level's score.
+    ``level1`` is optional: without it the verdict covers Levels 2-4 only and
+    says so in ``level1_included`` and the summary.
+    """
+    return await asyncio.to_thread(build_final_verdict, payload.claims, payload.level1)
 
 
 @router.get("/health", response_model=HealthResponse)

@@ -11,7 +11,7 @@ from typing import Any
 
 from ..core.runner import Check, run_checks
 from ..core.schemas import ExtractedClaims, LevelReport
-from ..core.scoring import score_evidence, weight
+from ..core.scoring import build_level_report, weight
 from .contact_check import check_contact
 from .existence_check import check_existence
 from .hr_email_check import check_hr_email
@@ -37,6 +37,6 @@ def run_level2(claims: ExtractedClaims, context: dict[str, Any] | None = None) -
     """Run all Level 2 checks and return the level's report."""
     context = context if context is not None else {}
     evidence = run_checks(CHECKS, claims, context)
-    report = LevelReport.from_evidence(LEVEL, evidence, score_evidence(evidence))
+    report = build_level_report(LEVEL, evidence)
     context["level2_report"] = report
     return report

@@ -8,6 +8,7 @@ city - earns a ``fail``.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from ..core.runner import item
@@ -75,13 +76,15 @@ def _verify_against_website(
     home = fetch(claims.website_url)
     if home.ok:
         pages.append((home.final_url or claims.website_url, home.visible_text))
-        base = (home.final_url or claims.website_url).rstrip("/")
-        for path in CONTACT_PATHS:
-            if any(contains_location(text, claims.location) for _, text in pages):
-                break
-            page = fetch(base + path)
-            if page.ok and page.visible_text:
-                pages.append((base + path, page.visible_text))
+        if not contains_location(home.visible_text, claims.location):
+            # Contact and about pages are fetched together rather than one after
+            # another; an address is as likely to be on any of them.
+            base = (home.final_url or claims.website_url).rstrip("/")
+            urls = [base + path for path in CONTACT_PATHS]
+            with ThreadPoolExecutor(max_workers=len(urls)) as pool:
+                for url, page in zip(urls, pool.map(fetch, urls)):
+                    if page.ok and page.visible_text:
+                        pages.append((url, page.visible_text))
 
     if not pages:
         return None  # site unreachable - fall back to search rather than guessing

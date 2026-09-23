@@ -9,7 +9,7 @@ from .domain_utils import parse_domain
 
 logger = logging.getLogger(__name__)
 
-DNS_TIMEOUT = 6.0
+DNS_TIMEOUT = 4.0
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 

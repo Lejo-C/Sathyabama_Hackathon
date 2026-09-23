@@ -70,16 +70,15 @@ def test_quoted_snippet_stays_short(monkeypatch, scam_claims, context):
 
 
 def test_clean_review_footprint_passes(monkeypatch, legit_claims, context):
-    def fake_search(query, **kwargs):
-        if "scam" in query:
-            return []
-        return make_results(
+    """A review-site profile with no complaint wording: present, and clean."""
+    monkeypatch.setattr(
+        review_scraper, "web_search",
+        lambda query, **kwargs: make_results(
             ("Nimbus Analytics Private Limited Reviews | AmbitionBox",
              "https://www.ambitionbox.com/reviews/nimbus-analytics-reviews",
              "Nimbus Analytics Private Limited rated 4.1 by 120 employees"),
-        )
-
-    monkeypatch.setattr(review_scraper, "web_search", fake_search)
+        ),
+    )
     evidence = review_scraper.check_reviews(legit_claims, context)
     assert by_id(evidence, "l4_fraud_mentions").status == "pass"
     assert by_id(evidence, "l4_review_presence").status == "pass"

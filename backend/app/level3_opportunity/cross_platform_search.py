@@ -49,6 +49,7 @@ SALARY_DIVERGENCE = 0.4
 # Kept high: partial matching scores unrelated titles at the same employer in the
 # fifties, and comparing salaries across different roles would be meaningless.
 SAME_ROLE_SIMILARITY = 70.0
+MAX_RESULTS = 8
 MONEY_RE = re.compile(r"(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d+)?)\s*(lpa|lakh|lakhs|k|cr)?", re.I)
 
 
@@ -70,16 +71,13 @@ def check_cross_platform(
             for cid, label in LABELS.items()
         ]
 
-    query = (
-        f'"{title}" "{company}" site:linkedin.com OR site:naukri.com '
-        f"OR site:indeed.com"
-    )
+    # One unfiltered query, filtered locally against JOB_PLATFORMS. Site
+    # operators are unreliable across search back-ends and a second query costs
+    # a full search budget on a throttled connection, so the filtering happens
+    # here instead of in the query string.
+    query = f'"{title}" "{company}" job vacancy'
     try:
-        results = web_search(query, max_results=8)
-        if not results:
-            # Some back-ends drop multi-site operators; retry unfiltered and
-            # filter locally rather than reporting a false "not listed anywhere".
-            results = web_search(f'"{title}" "{company}" job vacancy', max_results=8)
+        results = _search(query)
     except SearchUnavailable as exc:
         context["cross_platform_results"] = []
         context["cross_platform_available"] = False
@@ -100,6 +98,11 @@ def check_cross_platform(
         _presence_item(title, company, platform_hits, query),
         _consistency_item(claims, platform_hits),
     ]
+
+
+def _search(query: str) -> list[SearchResult]:
+    """One search at this check's result depth (looked up late, so tests patch it)."""
+    return web_search(query, max_results=MAX_RESULTS)
 
 
 def _platform_hits(

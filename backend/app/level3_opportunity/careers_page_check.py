@@ -8,6 +8,7 @@ warning.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from ..core.runner import item
@@ -52,9 +53,15 @@ def check_careers_page(
     careers_pages: list[dict[str, Any]] = []
     network_failures = 0
 
-    for path in CAREER_PATHS:
+    # All candidate paths are fetched at once: seven sequential round trips was
+    # the single slowest thing in the pipeline.
+    with ThreadPoolExecutor(max_workers=len(CAREER_PATHS)) as pool:
+        fetched = list(
+            zip(CAREER_PATHS, pool.map(lambda path: fetch(base_url + path), CAREER_PATHS))
+        )
+
+    for path, result in fetched:
         url = base_url + path
-        result = fetch(url)
         if not result.ok:
             tried.append({"url": url, "status": result.status_code, "error": result.error})
             if result.status_code is None:

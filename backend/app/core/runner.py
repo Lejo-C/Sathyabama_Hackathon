@@ -8,19 +8,21 @@ down the request.
 from __future__ import annotations
 
 import logging
+import os
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .schemas import CheckStatus, EvidenceItem, ExtractedClaims
-from .scoring import weight
+from .schemas import CheckStatus, EvidenceItem, ExtractedClaims, Priority
+from .scoring import priority_for, weight
 
 logger = logging.getLogger(__name__)
 
-# A single check may legitimately make two external calls, each of which retries
-# once at a 6s timeout (search + fallback search is the worst case at 24s), so
-# the per-check ceiling sits above 2 x 12s.
-CHECK_TIMEOUT = 30.0
+# Every check runs concurrently inside a wave, so this is also the ceiling for
+# the wave, and roughly for the whole request. It sits just above the search
+# budget: a check whose one external call is a search should get to finish it.
+CHECK_TIMEOUT = float(os.getenv("PRAHARI_CHECK_TIMEOUT", "9"))
 
 CheckFn = Callable[[ExtractedClaims, dict[str, Any]], list[EvidenceItem]]
 
@@ -46,12 +48,14 @@ def item(
     confidence: float = 1.0,
     risk_weight: float | None = None,
     weight_key: str | None = None,
+    priority: Priority | None = None,
 ) -> EvidenceItem:
-    """Build an evidence item, pulling the risk weight from the tuning dial.
+    """Build an evidence item, pulling weight and priority from the tuning dial.
 
-    ``weight_key`` lets several evidence items share one configured weight, e.g.
+    ``weight_key`` lets several evidence items share one configured check, e.g.
     every phrase matched by the selection-process analyser.
     """
+    key = weight_key or check_id
     return EvidenceItem(
         level=level,
         check_id=check_id,
@@ -59,8 +63,9 @@ def item(
         status=status,
         finding=finding,
         raw_data=raw_data,
-        risk_weight=risk_weight if risk_weight is not None else weight(weight_key or check_id),
+        risk_weight=risk_weight if risk_weight is not None else weight(key),
         confidence=confidence,
+        priority=priority or priority_for(key),
     )
 
 
@@ -72,9 +77,9 @@ def unavailable(
 ) -> EvidenceItem:
     """Build the standard "could not determine" evidence item."""
     if isinstance(check, Check):
-        level, cid, lbl, weight = check.level, check.check_id, check.label, check.risk_weight
+        level, cid, lbl, points = check.level, check.check_id, check.label, check.risk_weight
     else:
-        level, cid, lbl, weight = check
+        level, cid, lbl, points = check
     return EvidenceItem(
         level=level,
         check_id=check_id or cid,
@@ -82,7 +87,8 @@ def unavailable(
         status="unavailable",
         finding=f"Could not verify: {reason}.",
         raw_data={"reason": reason},
-        risk_weight=weight,
+        risk_weight=points,
+        priority=priority_for(check_id or cid),
         confidence=0.0,
     )
 
@@ -98,14 +104,23 @@ def run_checks(
     if not checks:
         return []
 
+    # One worker per check: they are IO-bound, and a queued check would serialise
+    # behind another check's full timeout, which is exactly what a wave exists to
+    # avoid.
     results: dict[str, list[EvidenceItem]] = {}
-    with ThreadPoolExecutor(max_workers=min(8, len(checks))) as pool:
+    pool = ThreadPoolExecutor(max_workers=max(1, min(24, len(checks))))
+    try:
         futures = {
             pool.submit(_run_one, check, claims, context): check for check in checks
         }
+        deadline = time.monotonic() + timeout
         for future, check in futures.items():
             try:
-                results[check.check_id] = future.result(timeout=timeout)
+                # One shared deadline, not one per check: waiting `timeout` on
+                # each future in turn would make the wave as slow as the sum of
+                # its stragglers.
+                remaining = max(0.0, deadline - time.monotonic())
+                results[check.check_id] = future.result(timeout=remaining)
             except FutureTimeout:
                 logger.warning("check %s exceeded %ss", check.check_id, timeout)
                 results[check.check_id] = [
@@ -116,6 +131,10 @@ def run_checks(
                 results[check.check_id] = [
                     unavailable(check, f"{type(exc).__name__}: {exc}")
                 ]
+    finally:
+        # Do not join: a socket still counting down its own timeout would hold
+        # the whole response open long after its result stopped being wanted.
+        pool.shutdown(wait=False, cancel_futures=True)
 
     evidence: list[EvidenceItem] = []
     for check in checks:

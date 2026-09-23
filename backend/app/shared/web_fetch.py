@@ -10,6 +10,7 @@ report, not crash the request.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 
 import requests
@@ -17,8 +18,11 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-EXTERNAL_TIMEOUT = 6.0
-RETRIES = 1
+EXTERNAL_TIMEOUT = float(os.getenv("PRAHARI_FETCH_TIMEOUT", "5"))
+# No retry by default: every level now runs concurrently, so a second attempt
+# on a stalled connection costs wall-clock time the demo cannot spare. Callers
+# that genuinely want one pass retries=1.
+RETRIES = 0
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 PRAHARI-verifier/1.0"
