@@ -20,7 +20,7 @@ from typing import Any
 from ..core.runner import item
 from ..core.schemas import EvidenceItem, ExtractedClaims
 from ..shared.domain_utils import WhoisUnavailable, domain_age, parse_domain
-from ..shared.fuzzy_match import name_matches_domain, similarity
+from ..shared.fuzzy_match import core_tokens, name_matches_domain, similarity
 from ..shared.web_fetch import fetch
 
 logger = logging.getLogger(__name__)
@@ -179,7 +179,7 @@ def _liveness_items(
         ]
 
     company = claims.company_name or ""
-    if company and similarity(company, text[:4000]) < 70 and company.lower() not in text.lower():
+    if company and not _mentions_company(text, company):
         return [
             item(
                 LEVEL, cid, LABELS[cid], "warning",
@@ -200,6 +200,22 @@ def _liveness_items(
                       "text_length": len(text)},
         )
     ]
+
+
+def _mentions_company(text: str, company: str) -> bool:
+    """True when the page names the business.
+
+    Compares the distinctive tokens rather than the full legal name: a real
+    company site says "Zoho", not "Zoho Corporation Private Limited", on every
+    page, and punishing that would be a false positive.
+    """
+    lowered = text.lower()
+    if company.lower() in lowered:
+        return True
+    tokens = [token for token in core_tokens(company) if len(token) > 2]
+    if tokens and all(token in lowered for token in tokens):
+        return True
+    return similarity(company, text[:4000]) >= 90
 
 
 def _name_match_item(claims: ExtractedClaims, label: str, domain: str) -> EvidenceItem:

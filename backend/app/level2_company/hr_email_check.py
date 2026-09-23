@@ -90,6 +90,26 @@ def _domain_match_item(
             return item(LEVEL, cid, LABELS[cid], "pass",
                         f"The recruiter writes from the company's own domain "
                         f"({company_domain}).", raw_data=raw)
+
+        # Large employers legitimately run sibling domains ("zohocorp.com" beside
+        # "zoho.com"), so a domain that still carries the company's name is a
+        # warning to confirm, not a fabrication verdict - and it does not feed
+        # the new-domain hard floor.
+        brand_ratio = max(
+            name_matches_domain(claims.company_name, parse_domain(domain).label),
+            name_matches_domain(parse_domain(company_domain).label, parse_domain(domain).label),
+        )
+        raw["brand_match_ratio"] = round(brand_ratio, 1)
+        if not free and brand_ratio >= DOMAIN_MATCH_RATIO:
+            context["email_domain_mismatch"] = False
+            return item(
+                LEVEL, cid, LABELS[cid], "warning",
+                f"The recruiter writes from '{domain}' rather than the website's "
+                f"'{company_domain}'. The two names match closely, which is normal "
+                "for a sibling corporate domain, but is worth confirming.",
+                raw_data=raw, confidence=0.7,
+            )
+
         context["email_domain_mismatch"] = True
         return item(
             LEVEL, cid, LABELS[cid], "fail",

@@ -202,6 +202,27 @@ def test_website_whois_failure_is_unavailable(monkeypatch, scam_claims, context)
     assert entry.confidence == 0.0
 
 
+def test_website_short_brand_name_on_page_is_enough(monkeypatch, legit_claims, context):
+    """A site saying "Nimbus" must not be flagged for omitting "Private Limited"."""
+    monkeypatch.setattr(website_check, "domain_age", lambda d, **k: age(900, d))
+    monkeypatch.setattr(
+        website_check, "fetch",
+        lambda url, *a, **k: html_page("Welcome to Nimbus. Analytics for retail. " + "x" * 400),
+    )
+    entry = by_id(website_check.check_website(legit_claims, context), "l2_website_live")
+    assert entry.status == "pass"
+
+
+def test_website_unrelated_content_still_warns(monkeypatch, legit_claims, context):
+    monkeypatch.setattr(website_check, "domain_age", lambda d, **k: age(900, d))
+    monkeypatch.setattr(
+        website_check, "fetch",
+        lambda url, *a, **k: html_page("Cheap flight deals and hotel bookings. " + "x" * 400),
+    )
+    entry = by_id(website_check.check_website(legit_claims, context), "l2_website_live")
+    assert entry.status == "warning"
+
+
 def test_website_typosquat_domain_fails(monkeypatch, legit_claims, context):
     claims = legit_claims.model_copy(
         update={"company_name": "Amazon", "website_url": "https://arnazon-careers.com"}
@@ -286,6 +307,28 @@ def test_hr_email_matching_company_domain_passes(monkeypatch, legit_claims, cont
     assert by_id(evidence, "l2_email_free_provider").status == "pass"
     assert by_id(evidence, "l2_email_mx").status == "pass"
     assert context["email_domain_mismatch"] is False
+
+
+def test_hr_email_sibling_corporate_domain_warns_not_fails(monkeypatch, legit_claims, context):
+    """Large employers run sibling domains; that is a confirm-it, not a verdict."""
+    claims = legit_claims.model_copy(
+        update={"company_name": "Zoho Corporation", "website_url": "https://www.zoho.com",
+                "recruiter_email": "careers@zohocorp.com"}
+    )
+    monkeypatch.setattr(hr_email_check, "has_mx", lambda host, **k: True)
+    entry = by_id(hr_email_check.check_hr_email(claims, context), "l2_email_domain_match")
+    assert entry.status == "warning"
+    assert context["email_domain_mismatch"] is False, "must not feed the new-domain floor"
+
+
+def test_hr_email_unrelated_domain_still_fails(monkeypatch, legit_claims, context):
+    claims = legit_claims.model_copy(
+        update={"recruiter_email": "hr@fast-hiring-jobs24.xyz"}
+    )
+    monkeypatch.setattr(hr_email_check, "has_mx", lambda host, **k: True)
+    entry = by_id(hr_email_check.check_hr_email(claims, context), "l2_email_domain_match")
+    assert entry.status == "fail"
+    assert context["email_domain_mismatch"] is True
 
 
 def test_hr_email_without_mx_fails(monkeypatch, legit_claims, context):

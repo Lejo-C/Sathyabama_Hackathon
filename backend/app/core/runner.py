@@ -17,9 +17,10 @@ from .scoring import weight
 
 logger = logging.getLogger(__name__)
 
-# A single check may legitimately make two 6s external calls (search + fetch),
-# so its own ceiling sits above the per-call timeout.
-CHECK_TIMEOUT = 20.0
+# A single check may legitimately make two external calls, each of which retries
+# once at a 6s timeout (search + fallback search is the worst case at 24s), so
+# the per-check ceiling sits above 2 x 12s.
+CHECK_TIMEOUT = 30.0
 
 CheckFn = Callable[[ExtractedClaims, dict[str, Any]], list[EvidenceItem]]
 

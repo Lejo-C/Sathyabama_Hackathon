@@ -10,6 +10,7 @@ its URL, never a reproduced paragraph.
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from ..core.runner import item
@@ -63,19 +64,16 @@ def check_reviews(claims: ExtractedClaims, context: dict[str, Any]) -> list[Evid
     fraud_query = f'"{company}" scam OR fraud OR complaint'
     review_query = f'"{company}" reviews glassdoor OR ambitionbox'
 
-    try:
-        fraud_results = web_search(fraud_query, max_results=6)
-    except SearchUnavailable as exc:
-        fraud_results, fraud_error = [], str(exc)
-    else:
-        fraud_error = None
-
-    try:
-        review_results = web_search(review_query, max_results=6)
-    except SearchUnavailable as exc:
-        review_results, review_error = [], str(exc)
-    else:
-        review_error = None
+    # The two searches are independent, so they run side by side: on a throttled
+    # network this keeps the check inside its timeout instead of spending two
+    # full search budgets back to back.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = {
+            "fraud": pool.submit(_search, fraud_query),
+            "review": pool.submit(_search, review_query),
+        }
+        fraud_results, fraud_error = futures["fraud"].result()
+        review_results, review_error = futures["review"].result()
 
     context.setdefault("searches", {})["l4_fraud_mentions"] = [
         r.to_dict() for r in fraud_results
@@ -88,6 +86,14 @@ def check_reviews(claims: ExtractedClaims, context: dict[str, Any]) -> list[Evid
         _fraud_item(company, fraud_results, fraud_query, fraud_error),
         _presence_item(company, review_results + fraud_results, review_query, review_error),
     ]
+
+
+def _search(query: str) -> tuple[list[SearchResult], str | None]:
+    """Run one search, returning ``(results, error)`` instead of raising."""
+    try:
+        return web_search(query, max_results=6), None
+    except SearchUnavailable as exc:
+        return [], str(exc)
 
 
 def _fraud_item(

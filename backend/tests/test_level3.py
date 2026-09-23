@@ -68,6 +68,25 @@ def test_cross_platform_salary_mismatch_fails(monkeypatch, legit_claims, context
     assert consistency.raw_data["mismatches"][0]["field"] == "salary"
 
 
+def test_other_vacancies_at_the_same_employer_are_not_inconsistency(
+    monkeypatch, legit_claims, context
+):
+    """An employer advertising different roles is normal, not a contradiction."""
+    monkeypatch.setattr(
+        cross_platform_search, "web_search",
+        lambda q, **k: make_results(
+            ("Technical Support Engineer - Nimbus Analytics Private Limited",
+             "https://www.linkedin.com/jobs/view/999",
+             "Nimbus Analytics Private Limited hiring Technical Support Engineer, Rs 3,00,000 per annum"),
+        ),
+    )
+    consistency = by_id(
+        cross_platform_search.check_cross_platform(legit_claims, context),
+        "l3_cross_platform_consistency",
+    )
+    assert consistency.status == "unavailable"
+
+
 def test_cross_platform_offline_is_unavailable(monkeypatch, legit_claims, context):
     monkeypatch.setattr(cross_platform_search, "web_search", offline_search)
     evidence = cross_platform_search.check_cross_platform(legit_claims, context)
@@ -194,6 +213,21 @@ def test_clean_application_flow_passes(monkeypatch, legit_claims, context):
     assert by_id(evidence, "l3_payment_gateway_link").status == "pass"
     assert by_id(evidence, "l3_payment_flow_instruction").status == "pass"
     assert context["payment_to_individual"] is False
+
+
+def test_upi_handle_at_the_end_of_a_sentence_is_detected(legit_claims, context):
+    claims = legit_claims.model_copy(
+        update={
+            "posting_text": "Deposit Rs 1,500 to UPI ID apexhr2026@okaxis. Then join.",
+            "application_url": None,
+        }
+    )
+    entry = by_id(
+        payment_flow_detector.check_payment_flow(claims, context), "l3_payment_instrument"
+    )
+    assert entry.status == "fail"
+    assert entry.raw_data["instruments"][0]["value"] == "apexhr2026@okaxis"
+    assert context["payment_to_individual"] is True
 
 
 def test_recruiter_email_is_not_mistaken_for_a_upi_handle(legit_claims, context):

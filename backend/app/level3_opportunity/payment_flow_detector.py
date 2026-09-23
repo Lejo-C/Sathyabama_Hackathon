@@ -36,8 +36,10 @@ LABELS = {
     "l3_payment_flow_instruction": "Payment Instruction on Application Page",
 }
 
-# A UPI handle looks like an email without a dotted TLD: "name@okhdfcbank".
-UPI_VPA_RE = re.compile(r"\b([a-zA-Z0-9][\w.\-]{2,49})@([a-zA-Z]{2,20})\b(?!\.)")
+# A UPI handle looks like an email without a dotted TLD: "name@okhdfcbank". The
+# lookahead rejects "hr@company.com" while still matching a handle that ends a
+# sentence ("...to apexhr2026@okaxis. Contact us").
+UPI_VPA_RE = re.compile(r"\b([a-zA-Z0-9][\w.\-]{2,49})@([a-zA-Z]{2,20})\b(?!\.[a-zA-Z]{2,})")
 UPI_HANDLES = {
     "okhdfcbank", "oksbi", "okaxis", "okicici", "ybl", "ibl", "axl", "upi", "paytm",
     "apl", "airtel", "freecharge", "jio", "sbi", "hdfcbank", "icici", "axisbank",

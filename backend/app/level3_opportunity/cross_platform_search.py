@@ -45,6 +45,10 @@ JOB_PLATFORMS = {
 # Two listings whose salaries differ by more than this fraction are treated as
 # describing different offers.
 SALARY_DIVERGENCE = 0.4
+# Title similarity above which a public listing is treated as the same vacancy.
+# Kept high: partial matching scores unrelated titles at the same employer in the
+# fifties, and comparing salaries across different roles would be meaningless.
+SAME_ROLE_SIMILARITY = 70.0
 MONEY_RE = re.compile(r"(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d+)?)\s*(lpa|lakh|lakhs|k|cr)?", re.I)
 
 
@@ -159,10 +163,22 @@ def _consistency_item(
             raw_data={"listings": 0}, confidence=0.0,
         )
 
+    # Only listings for the *same* role can contradict this one. An employer
+    # advertising other vacancies is normal and must not read as inconsistency.
+    same_role = [hit for hit in hits if hit["title_similarity"] >= SAME_ROLE_SIMILARITY]
+    if not same_role:
+        return item(
+            LEVEL, cid, LABELS[cid], "unavailable",
+            f"The {len(hits)} public listing(s) found advertise other roles at this "
+            "employer, so none of them can be compared with this vacancy.",
+            raw_data={"listings": [{"platform": h["platform"], "url": h["url"],
+                                    "title": h["result"].title} for h in hits[:5]]},
+            confidence=0.0,
+        )
+
     posting_salary = _salary_values(claims.salary or "")
     mismatches: list[dict[str, Any]] = []
-
-    for hit in hits:
+    for hit in same_role:
         listing_salary = _salary_values(hit["result"].snippet)
         if posting_salary and listing_salary and _diverges(posting_salary, listing_salary):
             mismatches.append(
@@ -170,17 +186,11 @@ def _consistency_item(
                  "posting_salary": posting_salary, "listing_salary": listing_salary,
                  "field": "salary"}
             )
-        elif hit["title_similarity"] < 50:
-            mismatches.append(
-                {"platform": hit["platform"], "url": hit["url"],
-                 "listing_title": hit["result"].title, "field": "job_title"}
-            )
 
     if mismatches:
-        fields = sorted({m["field"] for m in mismatches})
         return item(
             LEVEL, cid, LABELS[cid], "fail",
-            f"The same vacancy is advertised with different {', '.join(fields)} on "
+            f"The same vacancy is advertised with a different salary on "
             f"{len(mismatches)} other platform(s) - the offer in this posting does "
             "not match the public listing.",
             raw_data={"mismatches": mismatches[:3]}, confidence=0.7,
@@ -188,9 +198,10 @@ def _consistency_item(
 
     return item(
         LEVEL, cid, LABELS[cid], "pass",
-        f"Details in this posting are consistent with the {len(hits)} public "
-        "listing(s) found.",
-        raw_data={"listings": [{"platform": h["platform"], "url": h["url"]} for h in hits[:5]]},
+        f"Details in this posting are consistent with the {len(same_role)} matching "
+        "public listing(s) found.",
+        raw_data={"listings": [{"platform": h["platform"], "url": h["url"]}
+                               for h in same_role[:5]]},
     )
 
 
